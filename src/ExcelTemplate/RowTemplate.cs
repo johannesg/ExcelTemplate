@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Spreadsheet;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml.Packaging;
@@ -13,13 +14,28 @@ namespace ExcelTemplate
   {
     public Row Row { get; set; }
     private readonly WorkbookPart _workbookPart;
+    private readonly WorksheetPart _worksheetPart;
+    private readonly SheetData _sheetData;
+    private int _currentRowIndex;
 
     public List<Cell> Cells { get; set; }
 
-    public RowTemplate(WorkbookPart workbookPart, Row templateRow)
+    public RowTemplate(WorkbookPart workbookPart, WorksheetPart worksheetPart, DefinedNameValue templateRowName)
     {
-      Row = templateRow;
+      //      Row = templateRow;
       _workbookPart = workbookPart;
+      _worksheetPart = worksheetPart;
+
+      _sheetData = worksheetPart.Worksheet.Descendants<SheetData>().SingleOrDefault();
+
+      _currentRowIndex = Int32.Parse(templateRowName.StartRow);
+      Row = _sheetData.Descendants<Row>().SingleOrDefault(x => x.RowIndex == _currentRowIndex);
+    }
+
+    public void Save()
+    {
+      Row.Remove();
+      _worksheetPart.Worksheet.Save();
     }
 
     public Row CreateRow(int index, object value)
@@ -43,14 +59,14 @@ namespace ExcelTemplate
 
         var propertyName = m.Groups[1].Value;
 
-        Console.WriteLine("propertyname: {0}", propertyName);
+        //        Console.WriteLine("propertyname: {0}", propertyName);
 
         var propertyValue = GetPropertyValue(value, propertyName);
 
         if (propertyValue == null)
           continue;
 
-        Console.WriteLine("propertyValue: {0}", propertyValue);
+        //        Console.WriteLine("propertyValue: {0}", propertyValue);
 
         Cell newCell = CreateCell(index, cell, propertyValue);
 
@@ -90,7 +106,7 @@ namespace ExcelTemplate
         stringTablePart.SharedStringTable = new SharedStringTable();
 
       int index = 0;
-      
+
       foreach (var stringItem in stringTablePart.SharedStringTable.Elements<SharedStringItem>())
       {
         if (stringItem.InnerText == p)
@@ -136,6 +152,36 @@ namespace ExcelTemplate
       return value;
     }
 
+    public OpenXmlElement InsertRow(object o)
+    {
+      var row = CreateRow(_currentRowIndex, o);
+
+      MoveAllRowsAfter(_currentRowIndex);
+
+      Row.InsertBeforeSelf(row);
+      _currentRowIndex++;
+
+      return row;
+    }
+
+    private void MoveAllRowsAfter(int currentRowIndex)
+    {
+      uint newRowIndex;
+
+      IEnumerable<Row> rows = _sheetData.Descendants<Row>().Where(r => r.RowIndex.Value >= currentRowIndex);
+      foreach (Row row in rows)
+      {
+        newRowIndex = System.Convert.ToUInt32(row.RowIndex.Value + 1);
+
+        foreach (Cell cell in row.Elements<Cell>())
+        {
+          string cellReference = cell.CellReference.Value;
+          cell.CellReference = new StringValue(cellReference.Replace(row.RowIndex.Value.ToString(), newRowIndex.ToString()));
+        }
+
+        row.RowIndex = new UInt32Value(newRowIndex);
+      }
+    }
   }
 }
 

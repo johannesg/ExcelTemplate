@@ -21,16 +21,11 @@ namespace ExcelTemplate
   {
     SpreadsheetDocument _doc;
 
-    public RowTemplate RowTemplate { get; set; }
-
-    private SheetData _sheetData;
     private WorkbookPart _workbookPart;
-    private WorksheetPart _worksheetPart;
 
-    private DefinedNameValue _definedNameValue;
     private MemoryStream _inMemoryStream;
-    private Stream _outputStream;
-    private int _currentRowIndex;
+    private readonly Stream _outputStream;
+    private IDictionary<string, DefinedNameValue> _definedNames;
 
     public ExcelTemplate(string templatePath, Stream output)
     {
@@ -46,19 +41,16 @@ namespace ExcelTemplate
 
       _workbookPart = _doc.WorkbookPart;
 
-      var definedNames = GetDefinedNames();
+      _definedNames = GetDefinedNames();
+    }
 
-      if (!definedNames.TryGetValue("TemplateRow", out _definedNameValue))
+    private DefinedNameValue GetDefinedName(string name)
+    {
+      DefinedNameValue definedName;
+      if (!_definedNames.TryGetValue(name, out definedName))
         throw new ExcelTemplateException("Template row not found");
 
-      _worksheetPart = GetWorksheetPart();
-
-      _sheetData = _worksheetPart.Worksheet.Descendants<SheetData>().SingleOrDefault();
-
-      RowTemplate = GetRowTemplate();
-
-      if (RowTemplate == null)
-        throw new ExcelTemplateException(String.Format("Sheet {0} not found", _definedNameValue.SheetName));
+      return definedName;
     }
 
     private MemoryStream GetMemoryStream(string filename)
@@ -83,27 +75,26 @@ namespace ExcelTemplate
       return stream;
     }
 
-    private RowTemplate GetRowTemplate()
+    private RowTemplate GetRowTemplate(string templateName)
     {
-      _currentRowIndex = Int32.Parse(_definedNameValue.StartRow);
-      var templateRow = _sheetData.Descendants<Row>().SingleOrDefault(x => x.RowIndex == _currentRowIndex);
-      
-      return new RowTemplate(_workbookPart, templateRow);
+      var templateRowName = GetDefinedName(templateName);
+
+      if (templateRowName == null)
+        throw new ExcelTemplateException(String.Format("Template {0} not found", templateName));
+
+      var worksheetPart = GetWorksheetPart(templateRowName);
+
+      return new RowTemplate(_workbookPart, worksheetPart, templateRowName);
     }
 
-    private WorksheetPart GetWorksheetPart()
+    private WorksheetPart GetWorksheetPart(DefinedNameValue definedName)
     {
-      var sheet = _workbookPart.Workbook.Descendants<Sheet>().SingleOrDefault(x => x.Name == _definedNameValue.SheetName);
+      var sheet = _workbookPart.Workbook.Descendants<Sheet>().SingleOrDefault(x => x.Name == definedName.SheetName);
 
       if (sheet == null)
-        throw new ExcelTemplateException(String.Format("Worksheet {0} not found", _definedNameValue.SheetName));
+        throw new ExcelTemplateException(String.Format("Worksheet {0} not found", definedName.SheetName));
 
       return (WorksheetPart)_workbookPart.GetPartById(sheet.Id);
-    }
-
-    private Row GetTemplateRow(DefinedNameValue definedNameValue)
-    {
-      return null;
     }
 
     private IDictionary<string, DefinedNameValue> GetDefinedNames()
@@ -134,15 +125,17 @@ namespace ExcelTemplate
 
     public void WriteObjects<T>(IEnumerable<T> objects)
     {
+      WriteObjects("TemplateRow", objects);
+    }
+
+    public void WriteObjects<T>(string templateName, IEnumerable<T> objects)
+    {
+      var rowTemplate = GetRowTemplate(templateName);
+
       foreach (var o in objects)
-      {
-        var row = RowTemplate.CreateRow(_currentRowIndex, o);
+        rowTemplate.InsertRow(o);
 
-        RowTemplate.Row.InsertBeforeSelf(row);
-        _currentRowIndex++;
-      }
-
-      _worksheetPart.Worksheet.Save();
+      rowTemplate.Save();
     }
 
     private void CloseDocument()
@@ -157,8 +150,6 @@ namespace ExcelTemplate
 
     private void Save()
     {
-      RowTemplate.Row.Remove();
-
       CloseDocument();
 
       _inMemoryStream.WriteTo(_outputStream);

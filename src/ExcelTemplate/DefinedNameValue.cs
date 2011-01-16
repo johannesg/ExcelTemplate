@@ -1,6 +1,6 @@
 ﻿namespace ExcelTemplate
 {
-  class DefinedNameValue
+  public class DefinedNameValue
   {
     public string SheetName { get; set; }
 
